@@ -1,8 +1,23 @@
 import numpy as np
 import torch
+from torch import optim
+import argparse
 
-def adjust_learning_rate(optimizer, epoch, args):
-    # lr = args.learning_rate * (0.2 ** (epoch // 2))
+def array_equal_for_tensor(ts1:torch.Tensor, ts2:torch.Tensor) -> bool:
+    '''
+    Check whether two input tensors are the same
+
+    Need to send tensor to 'cpu' before compare. If in 'cuda', results will be always 'False'.
+    '''
+    return np.array_equal(ts1.to('cpu'), ts2.to('cpu'))
+
+def adjust_learning_rate(optimizer:optim.Optimizer, 
+                         epoch:int, 
+                         args:argparse.Namespace # could be dotdict class as well
+                         ):
+    '''
+    Adjust optimizer learning rate based on 'epoch' and 'type' specified
+    '''
     if args.lradj=='type1':
         lr_adjust = {epoch: args.learning_rate * (0.5 ** ((epoch-1) // 1))}
     elif args.lradj=='type2':
@@ -27,7 +42,13 @@ class EarlyStopping:
         self.delta = delta
 
     def __call__(self, val_loss, model, path):
-        score = -val_loss
+        '''
+        Set self.early_stop flag to True if meeting the criteria. Training function
+        can check this flag and stop if the flag is True.
+
+        Save model when val_loss reaches new low during training process.
+        '''
+        score = -val_loss # loss always>0, bigger loss, smaller score
         if self.best_score is None:
             self.best_score = score
             self.save_checkpoint(val_loss, model, path)
@@ -59,6 +80,9 @@ class StandardScaler():
         self.std = 1.
     
     def fit(self, data):
+        # data could be numpy array or tensor
+        if torch.is_tensor(data):
+            data = data.to_numpy()
         self.mean = data.mean(0)
         self.std = data.std(0)
 

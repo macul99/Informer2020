@@ -5,7 +5,12 @@ import torch.nn.functional as F
 class ConvLayer(nn.Module):
     def __init__(self, c_in):
         super(ConvLayer, self).__init__()
-        padding = 1 if torch.__version__>='1.5.0' else 2
+        v1,v2 = torch.__version__.split('.')[0:2]
+        if (int(v1)==1 and int(v2)>=5) or int(v1)>1:
+            padding = 1 
+        else:
+            padding = 2
+        # for Conv1d, channel refer to dim(-2), conv over dim(-1)
         self.downConv = nn.Conv1d(in_channels=c_in,
                                   out_channels=c_in,
                                   kernel_size=3,
@@ -16,11 +21,12 @@ class ConvLayer(nn.Module):
         self.maxPool = nn.MaxPool1d(kernel_size=3, stride=2, padding=1)
 
     def forward(self, x):
-        x = self.downConv(x.permute(0, 2, 1))
+        # x: [B,L,D]
+        x = self.downConv(x.permute(0, 2, 1)) # [B,D,L]
         x = self.norm(x)
         x = self.activation(x)
         x = self.maxPool(x)
-        x = x.transpose(1,2)
+        x = x.transpose(1,2) # [B,L/2,D]
         return x
 
 class EncoderLayer(nn.Module):
@@ -30,17 +36,18 @@ class EncoderLayer(nn.Module):
         self.attention = attention
         self.conv1 = nn.Conv1d(in_channels=d_model, out_channels=d_ff, kernel_size=1)
         self.conv2 = nn.Conv1d(in_channels=d_ff, out_channels=d_model, kernel_size=1)
-        self.norm1 = nn.LayerNorm(d_model)
+        '''
+        Unlike Batch Normalization and Instance Normalization, which applies 
+        scalar scale and bias for each entire channel/plane with the affine option, 
+        Layer Normalization applies per-element scale and bias with elementwise_affine
+        '''
+        self.norm1 = nn.LayerNorm(d_model) # norm over the last dim
         self.norm2 = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
         self.activation = F.relu if activation == "relu" else F.gelu
 
     def forward(self, x, attn_mask=None):
         # x [B, L, D]
-        # x = x + self.dropout(self.attention(
-        #     x, x, x,
-        #     attn_mask = attn_mask
-        # ))
         new_x, attn = self.attention(
             x, x, x,
             attn_mask = attn_mask
@@ -48,8 +55,9 @@ class EncoderLayer(nn.Module):
         x = x + self.dropout(new_x)
 
         y = x = self.norm1(x)
-        y = self.dropout(self.activation(self.conv1(y.transpose(-1,1))))
-        y = self.dropout(self.conv2(y).transpose(-1,1))
+        # for y, conv1->relu->dropout->conv2->dropout->norm(x+y)
+        y = self.dropout(self.activation(self.conv1(y.transpose(-1,1)))) # conv (B,d_model,L)
+        y = self.dropout(self.conv2(y).transpose(-1,1)) # conv (B,d_ff,L)
 
         return self.norm2(x+y), attn
 
@@ -64,11 +72,14 @@ class Encoder(nn.Module):
         # x [B, L, D]
         attns = []
         if self.conv_layers is not None:
+            # each conv_layer will reduce L by half
+            # attn_mask is generated in attn_layer dynamically if it is None for FullAttention
+            # For ProbAttention, not using the attn_mask passed in as input, always generate attn_mask dynamically
             for attn_layer, conv_layer in zip(self.attn_layers, self.conv_layers):
                 x, attn = attn_layer(x, attn_mask=attn_mask)
                 x = conv_layer(x)
                 attns.append(attn)
-            x, attn = self.attn_layers[-1](x, attn_mask=attn_mask)
+            x, attn = self.attn_layers[-1](x)
             attns.append(attn)
         else:
             for attn_layer in self.attn_layers:
@@ -89,6 +100,7 @@ class EncoderStack(nn.Module):
     def forward(self, x, attn_mask=None):
         # x [B, L, D]
         x_stack = []; attns = []
+        # all encoder running in parallel and concat at last
         for i_len, encoder in zip(self.inp_lens, self.encoders):
             inp_len = x.shape[1]//(2**i_len)
             x_s, attn = encoder(x[:, -inp_len:, :])

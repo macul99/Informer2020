@@ -1,10 +1,12 @@
 import torch
 
 class TriangularCausalMask():
-    def __init__(self, B, L, device="cpu"):
-        mask_shape = [B, 1, L, L]
-        with torch.no_grad():
-            self._mask = torch.triu(torch.ones(mask_shape, dtype=torch.bool), diagonal=1).to(device)
+    def __init__(self, B, L, S=None, device="cpu"):
+        S = S or L
+        mask_shape = [B, 1, L, S] # most of time L==S
+
+        # by default, torch.ones create a tensor with requires_grad=False
+        self._mask = torch.ones(mask_shape).triu(1).bool().to(device) 
 
     @property
     def mask(self):
@@ -12,12 +14,16 @@ class TriangularCausalMask():
 
 class ProbMask():
     def __init__(self, B, H, L, index, scores, device="cpu"):
-        _mask = torch.ones(L, scores.shape[-1], dtype=torch.bool).to(device).triu(1)
-        _mask_ex = _mask[None, None, :].expand(B, H, L, scores.shape[-1])
-        indicator = _mask_ex[torch.arange(B)[:, None, None],
-                             torch.arange(H)[None, :, None],
-                             index, :].to(device)
-        self._mask = indicator.view(scores.shape).to(device)
+        B1, H1, n_top = index.shape # index shape (B,H,n_top), n_top out of L (n_top<=L)
+        B2, H2, n_top1, S = scores.shape # scores shape (B,H,n_top,S), see attn.py
+        assert (B==B1==B2) and (H==H1==H2) and (n_top==n_top1), 'Input size does not match!'
+        mask_shape = [B, H, L, S] 
+        _mask = torch.ones(mask_shape).triu(1).bool() # (B, H, L, S)
+        indicator = _mask[torch.arange(B)[:, None, None],
+                          torch.arange(H)[None, :, None],
+                          index, :]
+        # indicator shape is (B,H,n_top,S), (B,1,1),(1,H,1) and (B,H,n_top) broadcast to (B,H,n_top)
+        self._mask = indicator.view(scores.shape).to(device) # will check whether the shape is correct or not
     
     @property
     def mask(self):

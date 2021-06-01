@@ -130,19 +130,23 @@ def time_features(dates, timeenc=1, freq='h'):
     > * H - [Hour of day, day of week, day of month, day of year]
     > * T - [Minute of hour*, hour of day, day of week, day of month, day of year]
     > * S - [Second of minute, minute of hour, hour of day, day of week, day of month, day of year]
-
     *minute returns a number from 0-3 corresponding to the 15 minute period it falls into.
     """
     if timeenc==0:
-        dates['month'] = dates.date.apply(lambda row:row.month,1)
-        dates['day'] = dates.date.apply(lambda row:row.day,1)
-        dates['weekday'] = dates.date.apply(lambda row:row.weekday(),1)
-        dates['hour'] = dates.date.apply(lambda row:row.hour,1)
-        dates['minute'] = dates.date.apply(lambda row:row.minute,1)
-        dates['minute'] = dates.minute.map(lambda x:x//15)
+        dates['month'] = dates.date.dt.month
+        dates['week'] = dates.date.dt.isocalendar().week
+        dates['day'] = dates.date.dt.day
+        dates['weekday'] = dates.date.dt.dayofweek
+        dates['hour'] = dates.date.dt.hour
+        dates['minute'] = dates.date.dt.minute
+        dates['minute'] = dates.minute//15 # fixed at 15min interval here
         freq_map = {
-            'y':[],'m':['month'],'w':['month'],'d':['month','day','weekday'],
-            'b':['month','day','weekday'],'h':['month','day','weekday','hour'],
+            'y':[],
+            'm':['month'],
+            'w':['month','week'],
+            'd':['month','day','weekday'],
+            'b':['month','day','weekday'],
+            'h':['month','day','weekday','hour'],
             't':['month','day','weekday','hour','minute'],
         }
         return dates[freq_map[freq.lower()]].values
